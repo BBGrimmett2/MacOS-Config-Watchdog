@@ -10,9 +10,13 @@ from .storage import connect, export, reconcile
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mac-watchdog")
-    parser.add_argument("command", choices=["scan", "export", "health"])
+    parser.add_argument("command", choices=["scan", "export", "health", "monitor"])
     args = parser.parse_args()
     try:
+        if args.command == "monitor":
+            from .monitor import run
+            run()
+            return 0
         conn = connect()
         if args.command == "scan":
             inventory = discover()

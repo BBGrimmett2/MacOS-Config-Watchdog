@@ -24,6 +24,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     db.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(db.parent, 0o700)
     conn = sqlite3.connect(db)
+    os.chmod(db, 0o600)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -65,8 +66,12 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn.commit()
     return conn
 
-def reconcile(conn: sqlite3.Connection, observations: list[dict[str, Any]], kind: str = "deep") -> int:
+def reconcile(conn: sqlite3.Connection, observations: list[dict[str, Any]], kind: str = "inventory", *, completed_categories: frozenset[str] | None = None) -> int:
     """Commit a completed inventory atomically. Never reconcile an incomplete scan."""
+    if completed_categories is None or not completed_categories:
+        raise ValueError("Completed inventory categories must be explicitly specified")
+    if any(item["category"] not in completed_categories for item in observations):
+        raise ValueError("Observation outside completed inventory coverage")
     now = utc_now()
     transaction = now
     ids = [item["resource_id"] for item in observations]
@@ -94,8 +99,8 @@ def reconcile(conn: sqlite3.Connection, observations: list[dict[str, Any]], kind
                 attributes_json=excluded.attributes_json,last_seen=excluded.last_seen,present=1
             """, (rid, item["category"], item["name"], attributes, now, now))
         # Removal is safe only for categories fully covered by this scan.
-        categories = {item["category"] for item in observations}
-        # A scan with zero resources must not claim all prior resources disappeared.
+        categories = completed_categories
+        # An empty, explicitly completed inventory confirms the category is empty.
         for rid, old in previous.items():
             if old["present"] and rid not in ids and old["category"] in categories:
                 conn.execute("UPDATE resources SET present=0,last_seen=? WHERE resource_id=?", (now, rid))

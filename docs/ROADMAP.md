@@ -4,11 +4,11 @@
 - [x] Project packaging, security guidance, and basic tests
 - [x] Local SQLite change history, transaction IDs, versioned JSON export
 - [x] Initial macOS application and Homebrew metadata inventory
-- [ ] FSEvents listener and event debounce
+- [x] Initial FSEvents-based listener and debounce (requires on-device testing)
 - [ ] launchd configuration and installation in Ansible-MacOS-Setup (separate PR)
-- [ ] 30-minute scans, login/wake reconciliation, weekly deep scan
+- [x] 30-minute reconciliation while monitor runs (login via launchd pending)\n- [ ] Verified wake-triggered reconciliation and actual weekly deep-discovery collectors
 - [ ] Apple-managed/version-aware baseline and receipt/signature classification
-- [ ] Manifest comparison and complete category-aware removal tracking
+- [ ] Manifest comparison\n- [x] Category-aware removal tracking with explicit complete-inventory coverage
 - [ ] Retention pruning, log rotation, robust independent health observer
 
 ## Phase 2 — Local review

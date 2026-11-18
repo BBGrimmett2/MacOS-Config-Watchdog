@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macos-config-watchdog"
+version = "0.1.0"
+description = "Read-only local macOS configuration drift inventory and change history"
+requires-python = ">=3.11"
+dependencies = ["watchdog>=4,<7"]
+
+[project.optional-dependencies]
+events = ["watchdog>=4,<7"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+mac-watchdog = "mac_watchdog.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

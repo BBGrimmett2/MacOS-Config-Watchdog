@@ -1,0 +1,41 @@
+name: Python tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e '.[test]'
+      - name: Test
+        run: python -m pytest -q
+      - name: Compile
+        run: python -m compileall -q src tests
+
+  macos-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install events extras
+        run: python -m pip install -e '.[test,events]'
+      - name: Import FSEvents observer
+        run: python -c "from watchdog.observers.fsevents import FSEventsObserver; print(FSEventsObserver)"
+      - name: Unit tests
+        run: python -m pytest -q

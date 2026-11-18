@@ -15,9 +15,9 @@ def main() -> int:
     try:
         conn = connect()
         if args.command == "scan":
-            observations = discover()
-            scan_id = reconcile(conn, observations)
-            print(json.dumps({"scan_id": scan_id, "resources": len(observations), "status": "success"}))
+            inventory = discover()
+            scan_id = reconcile(conn, inventory.observations, completed_categories=inventory.completed_categories)
+            print(json.dumps({"scan_id": scan_id, "resources": len(inventory.observations), "status": "success"}))
         elif args.command == "export":
             print(json.dumps(export(conn), indent=2))
         elif args.command == "health":

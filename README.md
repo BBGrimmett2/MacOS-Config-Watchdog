@@ -29,3 +29,4 @@ this will start automatically at login. By design, these commands do not modify
 macOS configuration. Never paste local JSON exports into public GitHub issues.
 
 See [ADRs](docs/adr/README.md) and [roadmap](docs/ROADMAP.md).
+\nThe persistent monitor runs a deep scan when no successful deep scan is recorded,\nthen approximately weekly; routine scans cover apps and Homebrew every 30 minutes.\nAfter long wall-clock gaps it also schedules a reconciliation, which is not a\nplatform-guaranteed wake notification.\n

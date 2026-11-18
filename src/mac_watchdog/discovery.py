@@ -1,7 +1,7 @@
-"""Metadata-only discovery with explicit coverage reporting.
+"""Allowlisted, metadata-only macOS inventory.
 
-A missing optional source (such as Homebrew) is *not* a completed inventory.
-Only categories that were successfully enumerated may drive removals.
+Only collectors that completed successfully contribute removal coverage.
+Never read user document contents, key material, or launchd command arguments.
 """
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import plistlib
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-CATEGORIES = frozenset({"app", "brew_formula", "brew_cask"})
+Mode = Literal["routine", "deep"]
 
 
 @dataclass(frozen=True)
@@ -29,49 +29,113 @@ def _run(*args: str) -> str:
 def discover_brew() -> Inventory:
     brew = shutil.which("brew")
     if brew is None:
+        # An absent binary is not a trustworthy completed package inventory.
         return Inventory([], frozenset())
-    output: list[dict[str, Any]] = []
-    for kind, flag in (("brew_formula", "--formula"), ("brew_cask", "--cask")):
+    observations: list[dict[str, Any]] = []
+    for category, flag in (("brew_formula", "--formula"), ("brew_cask", "--cask")):
         for name in sorted(set(_run(brew, "list", flag).splitlines())):
             name = name.strip()
             if name:
-                output.append({"resource_id": f"{kind}:{name}", "category": kind,
-                               "name": name, "attributes": {"installed": True}})
-    return Inventory(output, frozenset({"brew_formula", "brew_cask"}))
+                observations.append({
+                    "resource_id": f"{category}:{name}", "category": category,
+                    "name": name, "attributes": {"installed": True},
+                })
+    return Inventory(observations, frozenset({"brew_formula", "brew_cask"}))
 
 
 def discover_apps() -> Inventory:
     output: list[dict[str, Any]] = []
-    roots = (Path("/Applications"), Path.home() / "Applications")
-    for root in roots:
+    for root in (Path("/Applications"), Path.home() / "Applications"):
         if not root.exists():
             continue
         if not root.is_dir():
-            raise RuntimeError(f"Application inventory root is not a directory: {root.name}")
+            raise RuntimeError("Application inventory root is not a directory")
         for app in sorted(root.glob("*.app")):
-            info = app / "Contents" / "Info.plist"
             try:
-                with info.open("rb") as handle:
+                with (app / "Contents" / "Info.plist").open("rb") as handle:
                     plist = plistlib.load(handle)
                 bundle_id = plist.get("CFBundleIdentifier")
                 version = plist.get("CFBundleShortVersionString") or plist.get("CFBundleVersion")
                 if not isinstance(bundle_id, str) or not bundle_id:
                     raise ValueError("missing bundle identifier")
-                output.append({"resource_id": f"app:{bundle_id}", "category": "app",
-                               "name": app.stem,
-                               "attributes": {"bundle_id": bundle_id, "version": str(version or "")}})
+                output.append({
+                    "resource_id": f"app:{bundle_id}", "category": "app",
+                    "name": app.stem, "attributes": {
+                        "bundle_id": bundle_id, "version": str(version or ""),
+                    },
+                })
             except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
-                # Never interpret uninspectable applications as removed.
                 raise RuntimeError("Application metadata inventory incomplete") from None
-    # The same bundle may exist in both roots. A duplicate must be reviewed rather than
-    # allowing an arbitrary copy to mask the other.
     return Inventory(output, frozenset({"app"}))
 
 
-def discover() -> Inventory:
-    applications = discover_apps()
-    packages = discover_brew()
-    return Inventory(
-        applications.observations + packages.observations,
-        applications.completed_categories | packages.completed_categories,
+def discover_receipts() -> Inventory:
+    """Installed package receipt IDs only; no file lists or install paths."""
+    receipts = sorted(set(_run("/usr/sbin/pkgutil", "--pkgs").splitlines()))
+    output = [{
+        "resource_id": f"pkg_receipt:{rid}",
+        "category": "pkg_receipt",
+        "name": rid,
+        "attributes": {"installed": True},
+    } for rid in receipts if rid.strip()]
+    return Inventory(output, frozenset({"pkg_receipt"}))
+
+
+def discover_launchd() -> Inventory:
+    """Inventory only labels and scope; never read ProgramArguments or environment."""
+    locations = (
+        ("system_agent", Path("/Library/LaunchAgents")),
+        ("system_daemon", Path("/Library/LaunchDaemons")),
+        ("user_agent", Path.home() / "Library" / "LaunchAgents"),
     )
+    observations: list[dict[str, Any]] = []
+    for scope, directory in locations:
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise RuntimeError("Launchd inventory root is not a directory")
+        for file in sorted(directory.glob("*.plist")):
+            try:
+                with file.open("rb") as handle:
+                    data = plistlib.load(handle)
+                label = data.get("Label")
+                if not isinstance(label, str) or not label:
+                    raise ValueError("missing launchd Label")
+            except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
+                raise RuntimeError("Launchd metadata inventory incomplete") from None
+            observations.append({
+                "resource_id": f"launchd:{scope}:{label}",
+                "category": "launchd",
+                "name": label,
+                "attributes": {"scope": scope},
+            })
+    return Inventory(observations, frozenset({"launchd"}))
+
+
+def discover_os_build() -> Inventory:
+    """Version-aware OS identity; no device identifiers or serial numbers."""
+    product = _run("/usr/bin/sw_vers", "-productVersion").strip()
+    build = _run("/usr/bin/sw_vers", "-buildVersion").strip()
+    if not product or not build:
+        raise RuntimeError("Incomplete macOS version information")
+    return Inventory([{
+        "resource_id": "macos:build",
+        "category": "macos_build",
+        "name": "macOS",
+        "attributes": {"version": product, "build": build},
+    }], frozenset({"macos_build"}))
+
+
+def discover(mode: Mode = "deep") -> Inventory:
+    if mode not in ("routine", "deep"):
+        raise ValueError(f"Unsupported inventory mode: {mode}")
+    collectors = [discover_apps, discover_brew]
+    if mode == "deep":
+        collectors += [discover_receipts, discover_launchd, discover_os_build]
+    observations: list[dict[str, Any]] = []
+    categories: set[str] = set()
+    for collector in collectors:
+        result = collector()
+        observations.extend(result.observations)
+        categories.update(result.completed_categories)
+    return Inventory(observations, frozenset(categories))

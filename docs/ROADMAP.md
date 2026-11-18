@@ -6,8 +6,8 @@
 - [x] Initial macOS application and Homebrew metadata inventory
 - [x] Initial FSEvents-based listener and debounce (requires on-device testing)
 - [ ] launchd configuration and installation in Ansible-MacOS-Setup (separate PR)
-- [x] 30-minute reconciliation while monitor runs (login via launchd pending)\n- [ ] Verified wake-triggered reconciliation and actual weekly deep-discovery collectors
-- [ ] Apple-managed/version-aware baseline and receipt/signature classification
+- [x] 30-minute reconciliation while monitor runs (login via launchd pending)\n- [x] Initial, persisted weekly deep scans with receipts, launchd labels, OS build metadata\n- [ ] Native macOS wake notifications (currently best-effort wake-gap detection)
+- [ ] Apple-managed/version-aware classification and code-signature verification
 - [ ] Manifest comparison\n- [x] Category-aware removal tracking with explicit complete-inventory coverage
 - [ ] Retention pruning, log rotation, robust independent health observer
 

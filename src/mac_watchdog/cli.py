@@ -19,8 +19,8 @@ def main() -> int:
             return 0
         conn = connect()
         if args.command == "scan":
-            inventory = discover()
-            scan_id = reconcile(conn, inventory.observations, completed_categories=inventory.completed_categories)
+            inventory = discover(mode="deep")
+            scan_id = reconcile(conn, inventory.observations, kind="deep", completed_categories=inventory.completed_categories)
             print(json.dumps({"scan_id": scan_id, "resources": len(inventory.observations), "status": "success"}))
         elif args.command == "export":
             print(json.dumps(export(conn), indent=2))

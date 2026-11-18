@@ -40,8 +40,8 @@ def test_deep_inventory_has_additional_collectors():
 
 def test_launchd_collects_labels_not_arguments():
     with tempfile.TemporaryDirectory() as directory:
-        agents = Path(directory) / "LaunchAgents"
-        agents.mkdir()
+        agents = Path(directory) / "Library" / "LaunchAgents"
+        agents.mkdir(parents=True)
         with (agents / "example.plist").open("wb") as handle:
             plistlib.dump({
                 "Label": "org.example.test",

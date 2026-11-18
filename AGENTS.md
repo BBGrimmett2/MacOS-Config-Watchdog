@@ -20,3 +20,9 @@ Build a local-first macOS configuration watchdog. Ansible-MacOS-Setup is the sol
 - A scan failure or insufficient permissions is NOT evidence of deletion or resolution.
 - Use feature branches and PRs; never merge without user direction.
 - Respect repository boundaries: this repo ships the agent; Ansible-MacOS-Setup owns installation and launchd configuration.
+
+## Architecture Decision Records (mandatory)
+- Read `docs/adr/README.md` and all applicable accepted ADRs before changing implementation or architecture.
+- Every major design, security, persistence, interface, AI, GitHub automation, or deployment decision requires an ADR in the same PR; explicitly reference the ADR in the PR description.
+- Never silently reverse an accepted decision. Add a superseding ADR that links to the original and explains migration and consequences.
+- Do not merge a PR missing required ADRs, automated tests, or security validation. Respect all branch protection checks.

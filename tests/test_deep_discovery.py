@@ -82,3 +82,29 @@ def test_package_receipts_do_not_contain_filesystem_data():
         rows = discovery.discover_receipts().observations
     assert [row["name"] for row in rows] == ["com.apple.pkg.BaseSystem", "org.example.app"]
     assert all(set(row["attributes"]) == {"installed"} for row in rows)
+
+
+def test_launchd_missing_label_uses_stable_scoped_filename():
+    # Google Keystone's valid plists may omit Label; do not abort the scan.
+    with tempfile.TemporaryDirectory() as directory:
+        home = Path(directory)
+        agents = home / "Library" / "LaunchAgents"
+        agents.mkdir(parents=True)
+        filename = "com.google.keystone.agent.plist"
+        with (agents / filename).open("wb") as handle:
+            plistlib.dump({"ProgramArguments": ["/private/example", "--token=secret"]}, handle)
+        with patch.object(discovery.Path, "home", return_value=home):
+            with patch.object(discovery.Path, "glob", autospec=True) as glob:
+                glob.side_effect = lambda self, pattern: [agents / filename] if self == agents else []
+                with patch.object(discovery.Path, "exists", autospec=True) as exists, patch.object(
+                    discovery.Path, "is_dir", autospec=True
+                ) as isdir:
+                    exists.side_effect = lambda self: self == agents
+                    isdir.side_effect = lambda self: self == agents
+                    result = discovery.discover_launchd()
+        assert len(result.observations) == 1
+        record = result.observations[0]
+        assert record["resource_id"] == "launchd:user_agent:file:com.google.keystone.agent.plist"
+        assert record["attributes"]["identity_source"] == "filename"
+        assert "token" not in str(record)
+        assert result.completed_categories == frozenset({"launchd"})

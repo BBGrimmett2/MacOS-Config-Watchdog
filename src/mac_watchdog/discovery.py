@@ -99,15 +99,19 @@ def discover_launchd() -> Inventory:
                 with file.open("rb") as handle:
                     data = plistlib.load(handle)
                 label = data.get("Label")
-                if not isinstance(label, str) or not label:
-                    raise ValueError("missing launchd Label")
+                if not isinstance(data, dict):
+                    raise ValueError("unexpected plist root")
+                # Some legitimate launchd files (e.g. Google Keystone) omit Label.
+                # Use stable scoped filename identity without reading command arguments.
+                has_label = isinstance(label, str) and bool(label.strip())
+                identity = f"label:{label}" if has_label else f"file:{file.name}"
             except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
                 raise RuntimeError("Launchd metadata inventory incomplete") from None
             observations.append({
-                "resource_id": f"launchd:{scope}:{label}",
+                "resource_id": f"launchd:{scope}:{identity}",
                 "category": "launchd",
-                "name": label,
-                "attributes": {"scope": scope},
+                "name": label if has_label else file.name,
+                "attributes": {"scope": scope, "identity_source": "label" if has_label else "filename"},
             })
     return Inventory(observations, frozenset({"launchd"}))
 

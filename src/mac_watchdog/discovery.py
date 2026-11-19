@@ -98,9 +98,9 @@ def discover_launchd() -> Inventory:
             try:
                 with file.open("rb") as handle:
                     data = plistlib.load(handle)
-                label = data.get("Label")
                 if not isinstance(data, dict):
                     raise ValueError("unexpected plist root")
+                label = data.get("Label")
                 # Some legitimate launchd files (e.g. Google Keystone) omit Label.
                 # Use stable scoped filename identity without reading command arguments.
                 has_label = isinstance(label, str) and bool(label.strip())

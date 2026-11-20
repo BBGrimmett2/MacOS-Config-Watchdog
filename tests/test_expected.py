@@ -46,7 +46,7 @@ def test_match_unmanaged_and_not_observed_are_read_only():
         result = compare(conn, spec)
         assert conn.total_changes == before
         assert result["summary"] == {
-            "matched": 1, "attribute_mismatch": 0, "not_observed": 1, "unmanaged": 1
+            "matched": 1, "attribute_mismatch": 0, "not_observed": 1, "unmanaged": 1, "dependency": 0
         }
         assert all(r["resource_id"] != "app:com.example.other" for r in result["results"])
         assert "not proof of absence" in result["note"]
@@ -105,3 +105,34 @@ def test_oversized_manifest_rejected():
         path.write_bytes(b" " * (1024 * 1024 + 1))
         with pytest.raises(ValueError):
             load_manifest(path)
+
+
+def test_brew_dependencies_report_separately_from_requested_unmanaged_formulae():
+    with tempfile.TemporaryDirectory() as directory:
+        conn = connect(Path(directory) / "state.sqlite3")
+        rows = [
+            {"resource_id": "brew_formula:git", "category": "brew_formula", "name": "git",
+             "attributes": {"installed": True, "installed_on_request": True}},
+            {"resource_id": "brew_formula:libuv", "category": "brew_formula", "name": "libuv",
+             "attributes": {"installed": True, "installed_on_request": False}},
+            {"resource_id": "brew_formula:gh", "category": "brew_formula", "name": "gh",
+             "attributes": {"installed": True, "installed_on_request": True}},
+            {"resource_id": "brew_formula:legacy", "category": "brew_formula", "name": "legacy",
+             "attributes": {"installed": True}},
+        ]
+        reconcile(conn, rows, completed_categories=frozenset({"brew_formula"}))
+        wanted = manifest(resources=[
+            {"resource_id": "brew_formula:git", "category": "brew_formula"}
+        ])
+        before = conn.total_changes
+        report = compare(conn, wanted)
+        assert before == conn.total_changes
+        statuses = {row["resource_id"]: row["status"] for row in report["results"]}
+        assert statuses == {
+            "brew_formula:git": "matched",
+            "brew_formula:libuv": "dependency",
+            "brew_formula:gh": "unmanaged",
+            "brew_formula:legacy": "unmanaged",
+        }
+        assert report["summary"]["dependency"] == 1
+        assert report["summary"]["unmanaged"] == 2

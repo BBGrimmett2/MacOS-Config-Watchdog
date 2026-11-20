@@ -40,15 +40,27 @@ def discover_brew() -> Inventory:
     if brew is None:
         # An absent binary is not a trustworthy completed package inventory.
         return Inventory([], frozenset())
+    # The installed-on-request flag is authoritative Homebrew metadata, unlike
+    # brew leaves (which excludes requested packages used as dependencies).
+    formulae = set(_run(brew, "list", "--formula").splitlines())
+    requested = set(_run(brew, "list", "--formula", "--installed-on-request").splitlines())
+    casks = set(_run(brew, "list", "--cask").splitlines())
+    if not requested.issubset(formulae):
+        raise RuntimeError("Homebrew request metadata incomplete")
     observations: list[dict[str, Any]] = []
-    for category, flag in (("brew_formula", "--formula"), ("brew_cask", "--cask")):
-        for name in sorted(set(_run(brew, "list", flag).splitlines())):
-            name = name.strip()
-            if name:
-                observations.append({
-                    "resource_id": f"{category}:{name}", "category": category,
-                    "name": name, "attributes": {"installed": True},
-                })
+    for name in sorted(formulae):
+        if name.strip():
+            observations.append({
+                "resource_id": f"brew_formula:{name}", "category": "brew_formula",
+                "name": name,
+                "attributes": {"installed": True, "installed_on_request": name in requested},
+            })
+    for name in sorted(casks):
+        if name.strip():
+            observations.append({
+                "resource_id": f"brew_cask:{name}", "category": "brew_cask",
+                "name": name, "attributes": {"installed": True},
+            })
     return Inventory(observations, frozenset({"brew_formula", "brew_cask"}))
 
 

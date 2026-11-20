@@ -117,7 +117,7 @@ def test_brew_inventory_with_launchd_restricted_path():
         patch.object(discovery.Path, "is_file", autospec=True) as is_file,
         patch.object(discovery.Path, "stat", autospec=True) as stat,
         patch.object(discovery.shutil, "which", return_value=None) as which,
-        patch.object(discovery, "_run", side_effect=["bat\njq\n", "google-chrome\n"]) as run,
+        patch.object(discovery, "_run", side_effect=["bat\njq\n", "bat\n", "google-chrome\n"]) as run,
     ):
         is_file.side_effect = lambda p: str(p) == "/opt/homebrew/bin/brew"
         stat.return_value = Mock(st_mode=0o755)
@@ -127,7 +127,11 @@ def test_brew_inventory_with_launchd_restricted_path():
         "brew_formula:bat", "brew_formula:jq", "brew_cask:google-chrome"
     }
     run.assert_any_call("/opt/homebrew/bin/brew", "list", "--formula")
+    run.assert_any_call("/opt/homebrew/bin/brew", "list", "--formula", "--installed-on-request")
     run.assert_any_call("/opt/homebrew/bin/brew", "list", "--cask")
+    by_id = {row["resource_id"]: row for row in inventory.observations}
+    assert by_id["brew_formula:bat"]["attributes"]["installed_on_request"] is True
+    assert by_id["brew_formula:jq"]["attributes"]["installed_on_request"] is False
     which.assert_not_called()
 
 
@@ -150,3 +154,14 @@ def test_homebrew_fallback_intel_path():
     ):
         is_file.side_effect = lambda p: str(p) == "/usr/local/bin/brew"
         assert discovery._homebrew_executable() == "/usr/local/bin/brew"
+
+
+def test_homebrew_request_metadata_must_be_consistent():
+    from unittest.mock import patch
+    with (
+        patch.object(discovery, "_homebrew_executable", return_value="/opt/homebrew/bin/brew"),
+        patch.object(discovery, "_run", side_effect=["bat\n", "unknown\n", ""]),
+    ):
+        import pytest
+        with pytest.raises(RuntimeError, match="request metadata incomplete"):
+            discovery.discover_brew()

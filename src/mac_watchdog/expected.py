@@ -41,7 +41,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
         rid, category = item["resource_id"], item["category"]
         if (not isinstance(rid, str) or not rid or len(rid) > 512
                 or not isinstance(category, str) or category not in categories
-                or not rid.startswith(f"{category}:") or rid in ids):
+                or not rid.startswith(f"{'macos' if category == 'macos_build' else category}:") or rid in ids):
             raise ValueError("Invalid or duplicate expected resource ID/category")
         ids.add(rid)
         attrs = item.get("attributes", {})

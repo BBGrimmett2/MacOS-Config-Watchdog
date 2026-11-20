@@ -1,7 +1,7 @@
 """The AI boundary is opt-in, loopback-only, bounded, and never actionable."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -12,7 +12,7 @@ import pytest
 from mac_watchdog import local_ai
 from mac_watchdog.storage import connect, reconcile, store_log_signals
 
-NOW = datetime(2026, 11, 19, 21, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc) + timedelta(minutes=1)
 
 
 def populated(conn):

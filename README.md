@@ -30,3 +30,18 @@ macOS configuration. Never paste local JSON exports into public GitHub issues.
 
 See [ADRs](docs/adr/README.md) and [roadmap](docs/ROADMAP.md).
 \nThe persistent monitor runs a deep scan when no successful deep scan is recorded,\nthen approximately weekly; routine scans cover apps and Homebrew every 30 minutes.\nAfter long wall-clock gaps it also schedules a reconciliation, which is not a\nplatform-guaranteed wake notification.\n
+## Experimental local macOS log signals (PR #13)
+
+The new `mac-watchdog logs` command analyzes a bounded, read-only five-minute
+slice of macOS unified logs. Only five fixed fault signal categories from
+`launchd`, `trustd`, `mDNSResponder`, and `configd` are eligible. It never
+persists original log lines, commands, user paths or message text; only
+rounded collection windows and counts are retained locally for seven days.
+Use `mac-watchdog log-report` to read the last 100 grouped signal records.
+
+The regular monitor schedules this check every five minutes. Queries can time
+out, reach their byte/record cap, or lack permission; failures are not proof of
+health and never become an empty successful observation. This is not a complete
+security event monitor or audit log. No AI or automatic action is enabled.
+Do not deploy this experimental feature until on-device NDJSON and permission
+behavior are tested and the ADR is accepted.

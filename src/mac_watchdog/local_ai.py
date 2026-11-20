@@ -31,11 +31,11 @@ CHANGE_OPERATIONS = frozenset({"added", "changed", "removed"})
 # are selected from local constants, never returned by the model.
 FORBIDDEN_TEXT = re.compile(
     r"(?:https?://|file://|/(?:Users|private|etc|var|opt|tmp)/|"
-    r"[A-Za-z]:\\\\|[\\x00-\\x1f\\x7f]|"
-    r"[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}|"
-    r"\\b(?:sudo|chmod|chown|launchctl|rm|curl|wget|bash|zsh|"
+    r"[A-Za-z]:\\|[\x00-\x1f\x7f]|"
+    r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|"
+    r"\b(?:sudo|chmod|chown|launchctl|rm|curl|wget|bash|zsh|"
     r"osascript|python3?|pip3?|brew|ansible-playbook|"
-    r"execute|run|install|uninstall|disable|enable|delete|remove)\\b|"
+    r"execute|run|install|uninstall|disable|enable|delete|remove)\b|"
     r"[;&|><`$])",
     re.I,
 )

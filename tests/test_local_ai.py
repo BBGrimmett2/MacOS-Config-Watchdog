@@ -42,12 +42,17 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
         with connect(Path(temp) / "db.sqlite3") as conn:
             populated(conn)
             before = conn.total_changes
-            answer = {"severity": "warning", "summary": "A service crash was detected.",
-                      "recommendations": ["Review service stability locally."], "confidence": "low"}
+            answer = {"summary": "A service crash signal was recorded.", "confidence": "low"}
             with patch.object(local_ai, "_ask_local_model", return_value=answer) as ask:
                 result = local_ai.review(conn, now=NOW)
             assert result["status"] == "advisory"
-            assert result["analysis"] == answer
+            assert result["analysis"]["summary"] == answer["summary"]
+            assert result["analysis"]["confidence"] == "low"
+            assert result["analysis"]["severity"] == "warning"
+            assert result["analysis"]["severity_source"] == "deterministic_rules"
+            assert result["analysis"]["recommendations"] == [
+                local_ai.CHECKS["service"], local_ai.CHECKS["inventory"]
+            ]
             assert conn.total_changes == before
             payload = ask.call_args.args[0]
             text = json.dumps(payload)
@@ -65,12 +70,18 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
 
 
 @pytest.mark.parametrize("response", [
-    {}, {"severity": "warning", "summary": "ok", "recommendations": [], "confidence": "high", "execute": "rm -rf /"},
-    {"severity": "critical", "summary": "visit https://example.com", "recommendations": [], "confidence": "high"},
-    {"severity": "info", "summary": "Check /Users/private/file", "recommendations": [], "confidence": "low"},
-    {"severity": "info", "summary": "ok", "recommendations": ["x"] * 6, "confidence": "low"},
-    {"severity": "info", "summary": "ok", "recommendations": [], "confidence": "certain"},
-    {"severity": "info", "summary": "ok", "recommendations": ["a" + chr(0) + "b"], "confidence": "low"},
+    {},
+    {"summary": "ok", "confidence": "high", "recommendations": ["sudo launchctl unload foo"]},
+    {"summary": "ok", "confidence": "high", "severity": "critical"},
+    {"summary": "Visit https://example.com", "confidence": "high"},
+    {"summary": "Check /Users/private/file", "confidence": "low"},
+    {"summary": "The user is brian@example.com.", "confidence": "low"},
+    {"summary": "Run sudo launchctl unload com.example.service", "confidence": "low"},
+    {"summary": "Try rm -rf .", "confidence": "low"},
+    {"summary": "Open Terminal && delete files", "confidence": "low"},
+    {"summary": "Inspect using brew list", "confidence": "low"},
+    {"summary": "Check token abc" + chr(0), "confidence": "low"},
+    {"summary": "ok", "confidence": "certain"},
 ])
 def test_ai_output_fails_closed(response):
     with pytest.raises(ValueError):
@@ -120,8 +131,7 @@ def sample_envelope(answer):
 
 
 def test_ollama_loopback_only_and_model_response_validated():
-    answer = {"severity": "warning", "summary": "Investigate repeated service exits.",
-              "recommendations": ["Check locally recorded service health."], "confidence": "low"}
+    answer = {"summary": "Repeated service exit signals were observed.", "confidence": "low"}
     FakeConnection.instances.clear()
     FakeConnection.response = FakeResponse(sample_envelope(answer))
     with patch.object(local_ai.http.client, "HTTPConnection", FakeConnection):
@@ -145,7 +155,7 @@ def test_ollama_loopback_only_and_model_response_validated():
     FakeResponse(b"x" * (local_ai.MAX_RESPONSE_BYTES + 1)),
     FakeResponse(b"invalid json"),
     FakeResponse(json.dumps({"done": False, "message": {"content": "{}"}}).encode()),
-    FakeResponse(sample_envelope({"severity": "info", "summary": "ok", "recommendations": [], "confidence": "low"}),
+    FakeResponse(sample_envelope({"summary": "ok", "confidence": "low"}),
                  headers={"Content-Length": str(local_ai.MAX_RESPONSE_BYTES + 1)}),
 ])
 def test_local_ai_fail_closed_for_unavailable_malformed_or_oversized_model(response):
@@ -161,3 +171,63 @@ def test_oversized_input_rejected_before_connection():
         with pytest.raises(ValueError, match="size budget"):
             local_ai._ask_local_model({"payload": "x" * 6000})
         connection.assert_not_called()
+
+
+def test_deterministic_severity_does_not_escalate_initial_inventory_additions():
+    aggregate = {
+        "window_hours": 24, "log_signals": [],
+        "inventory_changes": [{"category": "app", "operation": "added", "count": 10000}],
+    }
+    assessment = local_ai._assess(aggregate)
+    assert assessment == {
+        "severity": "info",
+        "recommendations": [local_ai.CHECKS["inventory"]],
+        "severity_source": "deterministic_rules",
+    }
+
+
+def test_deterministic_severity_ignores_model_confidence_and_caps_at_warning():
+    aggregate = {
+        "window_hours": 24,
+        "log_signals": [
+            {"process": "trustd", "signal": "certificate_failure", "count": 2000},
+            {"process": "configd", "signal": "network_failure", "count": 1000000},
+        ],
+        "inventory_changes": [],
+    }
+    assessment = local_ai._assess(aggregate)
+    assert assessment["severity"] == "warning"
+    assert assessment["recommendations"] == [
+        local_ai.CHECKS["certificate"], local_ai.CHECKS["network"]
+    ]
+    assert "critical" not in json.dumps(assessment)
+
+
+def test_model_cannot_supply_actions_or_severity():
+    answer = {"summary": "Network failures were counted.", "confidence": "medium"}
+    with tempfile.TemporaryDirectory() as temp:
+        with connect(Path(temp) / "db.sqlite3") as conn:
+            populated(conn)
+            with patch.object(local_ai, "_ask_local_model", return_value=answer):
+                actual = local_ai.review(conn, now=NOW)["analysis"]
+    assert actual["severity"] == "warning"
+    assert actual["recommendations"] == [
+        local_ai.CHECKS["service"], local_ai.CHECKS["inventory"]
+    ]
+    assert set(actual) == {
+        "severity", "severity_source", "summary", "recommendations", "confidence"
+    }
+
+
+def test_unsafe_model_output_fails_closed_before_display():
+    with tempfile.TemporaryDirectory() as temp:
+        with connect(Path(temp) / "db.sqlite3") as conn:
+            populated(conn)
+            response = FakeResponse(sample_envelope({
+                "summary": "Run sudo launchctl unload com.example.service",
+                "confidence": "low",
+            }))
+            FakeConnection.response = response
+            with patch.object(local_ai.http.client, "HTTPConnection", FakeConnection):
+                with pytest.raises(ValueError):
+                    local_ai.review(conn, now=NOW)

@@ -117,7 +117,7 @@ def test_brew_inventory_with_launchd_restricted_path():
         patch.object(discovery.Path, "is_file", autospec=True) as is_file,
         patch.object(discovery.Path, "stat", autospec=True) as stat,
         patch.object(discovery.shutil, "which", return_value=None) as which,
-        patch.object(discovery, "_run", side_effect=["bat\\njq\\n", "google-chrome\\n"]) as run,
+        patch.object(discovery, "_run", side_effect=["bat\njq\n", "google-chrome\n"]) as run,
     ):
         is_file.side_effect = lambda p: str(p) == "/opt/homebrew/bin/brew"
         stat.return_value = Mock(st_mode=0o755)

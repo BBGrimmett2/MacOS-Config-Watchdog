@@ -32,8 +32,8 @@ SEVERITIES = frozenset({"info", "warning", "critical"})
 # Text is displayed locally only; these checks reject suspicious hallucinated
 # URLs, absolute filesystem paths, control characters, and output bloat.
 FORBIDDEN_TEXT = re.compile(
-    r"(?:https?://|file://|(?:^|\\s)/(?:Users|private|etc|var|opt|tmp)/|"
-    r"(?:[A-Za-z]:\\\\)|[\\x00-\\x08\\x0b-\\x1f\\x7f])", re.I
+    r"(?:https?://|file://|/(?:Users|private|etc|var|opt|tmp)/|[A-Za-z]:\\|[\x00-\x1f\x7f])",
+    re.I,
 )
 SYSTEM_PROMPT = (
     "You analyze aggregate macOS monitoring counts. The input contains only "

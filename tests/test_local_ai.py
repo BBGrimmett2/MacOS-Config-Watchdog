@@ -21,6 +21,12 @@ def populated(conn):
         "category": "app", "name": "Private Product",
         "attributes": {"version": "supersecret"},
     }], completed_categories=frozenset({"app"}))
+    # A post-baseline change is meaningful, unlike the initial addition.
+    reconcile(conn, [{
+        "resource_id": "app:com.secret.private",
+        "category": "app", "name": "Private Product",
+        "attributes": {"version": "supersecret-v2"},
+    }], completed_categories=frozenset({"app"}))
     store_log_signals(
         conn, {("launchd", "service_crash"): 2},
         collected_at=NOW,
@@ -66,7 +72,7 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
                 {"process": "launchd", "signal": "service_crash", "count": 2}
             ]
             assert payload["inventory_changes"] == [
-                {"category": "app", "operation": "added", "count": 1}
+                {"category": "app", "operation": "changed", "count": 1}
             ]
 
 
@@ -300,3 +306,30 @@ def test_hard_deadline_interrupts_trickled_response_and_restores_alarm():
     assert signal.getsignal(signal.SIGALRM) == original_handler
     assert signal.getitimer(signal.ITIMER_REAL)[0] == 0
     assert SlowConnection.instances[-1].closed
+
+
+def test_post_baseline_addition_is_meaningful():
+    with tempfile.TemporaryDirectory() as temp:
+        with connect(Path(temp) / "db.sqlite3") as conn:
+            reconcile(conn, [{
+                "resource_id": "app:original", "category": "app", "name": "Original",
+                "attributes": {"version": "1"},
+            }], completed_categories=frozenset({"app"}))
+            reconcile(conn, [{
+                "resource_id": "app:original", "category": "app", "name": "Original",
+                "attributes": {"version": "1"},
+            }, {
+                "resource_id": "app:new", "category": "app", "name": "New",
+                "attributes": {"version": "1"},
+            }], completed_categories=frozenset({"app"}))
+            captured = {}
+            def fake_model(data):
+                captured.update(data)
+                return {"focus": "inventory", "confidence": "low"}
+            with patch.object(local_ai, "_ask_local_model", side_effect=fake_model):
+                report = local_ai.review(conn)
+            assert report["status"] == "advisory"
+            assert captured["inventory_changes"] == [
+                {"category": "app", "operation": "added", "count": 1}
+            ]
+            assert captured["baseline_additions"] == 1

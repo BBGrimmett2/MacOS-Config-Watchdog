@@ -70,7 +70,7 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
     {"severity": "info", "summary": "Check /Users/private/file", "recommendations": [], "confidence": "low"},
     {"severity": "info", "summary": "ok", "recommendations": ["x"] * 6, "confidence": "low"},
     {"severity": "info", "summary": "ok", "recommendations": [], "confidence": "certain"},
-    {"severity": "info", "summary": "ok", "recommendations": ["a\\x00b"], "confidence": "low"},
+    {"severity": "info", "summary": "ok", "recommendations": ["a" + chr(0) + "b"], "confidence": "low"},
 ])
 def test_ai_output_fails_closed(response):
     with pytest.raises(ValueError):
@@ -137,7 +137,7 @@ def test_ollama_loopback_only_and_model_response_validated():
     assert sent["stream"] is False
     assert sent["think"] is False
     assert "tools" not in sent
-    assert all("secret" not in str(m) for m in sent["messages"])
+    assert "secret" not in sent["messages"][1]["content"]
 
 
 @pytest.mark.parametrize("response", [

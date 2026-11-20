@@ -27,7 +27,7 @@ SIGNAL_TYPES = frozenset({
     ("configd", "network_failure"),
 })
 CHANGE_CATEGORIES = frozenset({
-    "app", "brew_formula", "brew_cask", "pkg_receipt", "launchd", "macos_build",
+    "app", "brew_formula", "brew_cask", "pkg_receipt", "launchd", "macos_build", "ollama_model",
 })
 CHANGE_OPERATIONS = frozenset({"added", "changed", "removed"})
 # The model selects a structured focus only. Displayed text is code-owned.

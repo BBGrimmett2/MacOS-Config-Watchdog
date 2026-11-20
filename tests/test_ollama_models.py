@@ -35,8 +35,7 @@ class OllamaModelTests(unittest.TestCase):
     def test_observes_names_and_digests_without_private_metadata(self):
         payload = {"models": [{"name": "qwen3:8b", "digest": DIGEST1,
                                 "details": {"private": "not stored"}}]}
-        with patch("mac_watchdog.discovery.urllib.request.urlopen",
-                   return_value=FakeResponse(payload)):
+        with patch("mac_watchdog.discovery.urllib.request.build_opener") as opener:\n            opener.return_value.open.return_value = FakeResponse(payload)
             result = discover_ollama_models()
         self.assertEqual(result.completed_categories, frozenset({"ollama_model"}))
         self.assertEqual(result.observations, [{
@@ -45,15 +44,13 @@ class OllamaModelTests(unittest.TestCase):
         }])
 
     def test_offline_does_not_claim_empty_inventory(self):
-        with patch("mac_watchdog.discovery.urllib.request.urlopen",
-                   side_effect=URLError("connection refused")):
+        with patch("mac_watchdog.discovery.urllib.request.build_opener") as opener:\n            opener.return_value.open.side_effect = URLError("connection refused")
             result = discover_ollama_models()
         self.assertEqual(result.observations, [])
         self.assertEqual(result.completed_categories, frozenset())
 
     def test_malformed_response_fails_closed(self):
-        with patch("mac_watchdog.discovery.urllib.request.urlopen",
-                   return_value=FakeResponse({"models": [{"name": "qwen3:8b"}]})):
+        with patch("mac_watchdog.discovery.urllib.request.build_opener") as opener:\n            opener.return_value.open.return_value = FakeResponse({"models": [{"name": "qwen3:8b"}]})
             with self.assertRaises(ValueError):
                 discover_ollama_models()
 

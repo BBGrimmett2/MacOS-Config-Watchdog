@@ -33,8 +33,9 @@ def main() -> int:
             from .logscan import collect_and_store
             print(json.dumps(collect_and_store(conn), indent=2))
         elif args.command == "log-report":
-            from .storage import recent_log_signals
+            from .storage import recent_log_signals, collection_health
             print(json.dumps({"schema_version": 1, "mode": "read_only",
+                              "coverage": collection_health(conn),
                               "signals": recent_log_signals(conn)}, indent=2))
         elif args.command == "compare":
             manifest = load_manifest(args.manifest)

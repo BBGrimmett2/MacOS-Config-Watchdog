@@ -74,8 +74,10 @@ def discover_ollama_models() -> Inventory:
     Consequently an offline service cannot cause synthetic model removals.
     """
     request = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
+    # Never consult HTTP(S) proxy environment settings for local model metadata.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
+        with opener.open(request, timeout=3) as response:
             data = response.read(1024 * 1024 + 1)
     except (OSError, urllib.error.URLError, TimeoutError):
         return Inventory([], frozenset())

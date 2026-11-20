@@ -78,9 +78,13 @@ def compare(conn: sqlite3.Connection, manifest: dict[str, Any]) -> dict[str, Any
             status = "attribute_mismatch" if different else "matched"
         results.append({"resource_id": rid, "status": status, "differing_attributes": different})
     for rid in sorted(actual):
-        results.append({"resource_id": rid, "status": "unmanaged", "differing_attributes": []})
+        row = actual[rid]
+        metadata = json.loads(row["attributes_json"])
+        status = ("dependency" if row["category"] == "brew_formula"
+                  and metadata.get("installed_on_request") is False else "unmanaged")
+        results.append({"resource_id": rid, "status": status, "differing_attributes": []})
     summary = {name: sum(r["status"] == name for r in results) for name in (
-        "matched", "attribute_mismatch", "not_observed", "unmanaged"
+        "matched", "attribute_mismatch", "not_observed", "unmanaged", "dependency"
     )}
     return {
         "schema_version": 1,
@@ -88,5 +92,5 @@ def compare(conn: sqlite3.Connection, manifest: dict[str, Any]) -> dict[str, Any
         "managed_categories": sorted(managed),
         "summary": summary,
         "results": results,
-        "note": "not_observed is not proof of absence; unmanaged is not proof of malicious drift",
+        "note": "not_observed is not proof of absence; unmanaged is not proof of malicious drift; dependency reflects Homebrew installed-on-request metadata",
     }

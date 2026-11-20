@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BBGrimmett2/Ansible-MacOS-Setup
-          ref: 62a20a44e0460ba302dae31c4b8ffac3089ca94d
+          ref: d61b99d26b885d2997a56e55e569eced1ebbe13b
           path: ansible-setup
           persist-credentials: false
       - name: Setup Python

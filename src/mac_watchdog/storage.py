@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -48,6 +48,13 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
         current_json TEXT,
         transaction_id TEXT NOT NULL,
         FOREIGN KEY(resource_id) REFERENCES resources(resource_id)
+      );
+      CREATE TABLE IF NOT EXISTS log_signals (
+        window_start TEXT NOT NULL,
+        process TEXT NOT NULL,
+        signal TEXT NOT NULL,
+        count INTEGER NOT NULL CHECK(count >= 1),
+        PRIMARY KEY(window_start, process, signal)
       );
       CREATE TABLE IF NOT EXISTS scans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,3 +132,42 @@ def export(conn: sqlite3.Connection) -> dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION, "generated_at": utc_now(),
             "last_scan": dict(last) if last else None,
             "resources": resources, "changes": changes}
+
+
+def store_log_signals(conn: sqlite3.Connection, counts: dict[tuple[str, str], int], *,
+                      collected_at: datetime) -> dict[str, Any]:
+    """Retain only count/allowlisted labels for seven days; no raw log text."""
+    from .logscan import PROCESSES, SIGNALS
+    if collected_at.tzinfo is None:
+        raise ValueError("Log collection timestamp must have a timezone")
+    allowed = {process: {name for name, _ in patterns} for process, patterns in SIGNALS.items()}
+    for (process, signal), count in counts.items():
+        if process not in PROCESSES or signal not in allowed[process]:
+            raise ValueError("Unsupported log signal")
+        if type(count) is not int or count <= 0:
+            raise ValueError("Log count must be a positive integer")
+    at = collected_at.astimezone(timezone.utc)
+    bucket = at.replace(minute=(at.minute // 5) * 5, second=0, microsecond=0)
+    cutoff = (at - timedelta(days=7)).isoformat()
+    with conn:
+        for (process, signal), count in sorted(counts.items()):
+            conn.execute("""
+                INSERT INTO log_signals(window_start,process,signal,count)
+                VALUES(?,?,?,?)
+                ON CONFLICT(window_start,process,signal)
+                DO UPDATE SET count=MAX(count,excluded.count)
+            """, (bucket.isoformat(), process, signal, count))
+        conn.execute("DELETE FROM log_signals WHERE window_start < ?", (cutoff,))
+    return {
+        "window_start": bucket.isoformat(), "signal_types": len(counts),
+        "event_count": sum(counts.values()), "status": "success",
+    }
+
+
+def recent_log_signals(conn: sqlite3.Connection, limit: int = 100) -> list[dict[str, Any]]:
+    if not 1 <= limit <= 100:
+        raise ValueError("Log signal limit must be between 1 and 100")
+    return [dict(row) for row in conn.execute(
+        "SELECT window_start,process,signal,count FROM log_signals "
+        "ORDER BY window_start DESC,process,signal LIMIT ?", (limit,)
+    )]

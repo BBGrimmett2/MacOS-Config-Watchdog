@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import plistlib
+import json
+import urllib.error
+import urllib.request
 import shutil
 import subprocess
 from pathlib import Path
@@ -62,6 +65,47 @@ def discover_brew() -> Inventory:
                 "name": name, "attributes": {"installed": True},
             })
     return Inventory(observations, frozenset({"brew_formula", "brew_cask"}))
+
+
+def discover_ollama_models() -> Inventory:
+    """Read model names and content digests from the local Ollama API only.
+
+    An unavailable Ollama service is *not* a completed empty inventory.
+    Consequently an offline service cannot cause synthetic model removals.
+    """
+    request = urllib.request.Request("http://127.0.0.1:11434/api/tags", method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            data = response.read(1024 * 1024 + 1)
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return Inventory([], frozenset())
+    if len(data) > 1024 * 1024:
+        raise ValueError("Ollama model metadata exceeded 1 MiB")
+    try:
+        payload = json.loads(data)
+        models = payload["models"]
+        if not isinstance(models, list) or len(models) > 20000:
+            raise ValueError("Invalid Ollama model inventory")
+        output = []
+        seen = set()
+        for model in models:
+            name, digest = model["name"], model["digest"]
+            if (not isinstance(name, str) or not name or len(name) > 400
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)
+                    or name in seen):
+                raise ValueError("Invalid or duplicate Ollama model metadata")
+            seen.add(name)
+            output.append({
+                "resource_id": f"ollama_model:{name}",
+                "category": "ollama_model",
+                "name": name,
+                "attributes": {"digest": digest},
+            })
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid Ollama model response") from exc
+    return Inventory(sorted(output, key=lambda item: item["resource_id"]),
+                     frozenset({"ollama_model"}))
 
 
 def discover_apps() -> Inventory:
@@ -154,7 +198,7 @@ def discover_os_build() -> Inventory:
 def discover(mode: Mode = "deep") -> Inventory:
     if mode not in ("routine", "deep"):
         raise ValueError(f"Unsupported inventory mode: {mode}")
-    collectors = [discover_apps, discover_brew]
+    collectors = [discover_apps, discover_brew, discover_ollama_models]
     if mode == "deep":
         collectors += [discover_receipts, discover_launchd, discover_os_build]
     observations: list[dict[str, Any]] = []

@@ -88,8 +88,9 @@ def _aggregate(conn: sqlite3.Connection, now: datetime) -> dict[str, Any]:
     signals = []
     for row in conn.execute(
         "SELECT process,signal,SUM(count) AS total FROM log_signals "
-        "WHERE window_start >= ? GROUP BY process,signal ORDER BY process,signal",
-        (cutoff,),
+        "WHERE window_start >= ? AND window_start <= ? "
+        "GROUP BY process,signal ORDER BY process,signal",
+        (cutoff, now.astimezone(timezone.utc).isoformat()),
     ):
         key = (row["process"], row["signal"])
         if key not in SIGNAL_TYPES or type(row["total"]) is not int or row["total"] < 0:

@@ -45,3 +45,17 @@ health and never become an empty successful observation. This is not a complete
 security event monitor or audit log. No AI or automatic action is enabled.
 Do not deploy this experimental feature until on-device NDJSON and permission
 behavior are tested and the ADR is accepted.
+
+## Experimental on-demand local AI review
+
+`mac-watchdog ai-review` requests a **read-only advisory** from a locally running
+Ollama `qwen3:8b` model at fixed loopback address `127.0.0.1:11434`. It uses
+only counts of whitelisted log signals and inventory change categories from the
+last 24 hours. No resource names, IDs, log lines, paths or private config are sent.
+It does not call Ollama if there are no recorded findings.
+
+The command never runs automatically, modifies system settings, stores model
+answers or sends anything to GitHub. The model must be installed separately;
+this feature does **not** install or start Ollama. Model output is strictly
+validated, may be wrong, and must never be treated as authorization to act.
+Ansible's current pinned watchdog install is unchanged in this PR.

@@ -25,6 +25,7 @@ RECONCILE_SECONDS = 30 * 60
 DEBOUNCE_SECONDS = 5
 WEEK_SECONDS = 7 * 24 * 60 * 60
 WAKE_GAP_SECONDS = 120
+LOG_WINDOW_SECONDS = 5 * 60
 
 
 def deep_scan_due(last_deep: str | None, now: datetime) -> bool:
@@ -90,6 +91,7 @@ def run() -> None:
 
     observer.start()
     next_periodic = time.monotonic()  # Initial discovery at startup.
+    next_logs = time.monotonic()  # Initial bounded log-window collection.
     last_wall = time.time()
     try:
         while not stop.is_set():
@@ -110,6 +112,14 @@ def run() -> None:
                 except Exception:
                     LOG.exception("Reconciliation failed; previous state preserved")
                 next_periodic = time.monotonic() + RECONCILE_SECONDS
+            if now >= next_logs or woke:
+                try:
+                    from .logscan import collect_and_store
+                    with connect() as conn:
+                        collect_and_store(conn)
+                except Exception:
+                    LOG.exception("Log signal collection incomplete; no empty window recorded")
+                next_logs = time.monotonic() + LOG_WINDOW_SECONDS
             stop.wait(1)
     finally:
         observer.stop()

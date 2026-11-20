@@ -42,11 +42,12 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
         with connect(Path(temp) / "db.sqlite3") as conn:
             populated(conn)
             before = conn.total_changes
-            answer = {"summary": "A service crash signal was recorded.", "confidence": "low"}
+            answer = {"focus": "service", "confidence": "low"}
             with patch.object(local_ai, "_ask_local_model", return_value=answer) as ask:
                 result = local_ai.review(conn, now=NOW)
             assert result["status"] == "advisory"
-            assert result["analysis"]["summary"] == answer["summary"]
+            assert result["analysis"]["summary"] == local_ai.FOCUS_SUMMARIES["service"]
+            assert result["analysis"]["focus"] == "service"
             assert result["analysis"]["confidence"] == "low"
             assert result["analysis"]["severity"] == "warning"
             assert result["analysis"]["severity_source"] == "deterministic_rules"
@@ -71,21 +72,34 @@ def test_model_receives_only_allowlisted_anonymous_aggregates():
 
 @pytest.mark.parametrize("response", [
     {},
-    {"summary": "ok", "confidence": "high", "recommendations": ["sudo launchctl unload foo"]},
-    {"summary": "ok", "confidence": "high", "severity": "critical"},
-    {"summary": "Visit https://example.com", "confidence": "high"},
-    {"summary": "Check /Users/private/file", "confidence": "low"},
-    {"summary": "The user is brian@example.com.", "confidence": "low"},
-    {"summary": "Run sudo launchctl unload com.example.service", "confidence": "low"},
-    {"summary": "Try rm -rf .", "confidence": "low"},
-    {"summary": "Open Terminal && delete files", "confidence": "low"},
-    {"summary": "Inspect using brew list", "confidence": "low"},
-    {"summary": "Check token abc" + chr(0), "confidence": "low"},
-    {"summary": "ok", "confidence": "certain"},
+    {"focus": "service", "confidence": "high", "recommendations": ["sudo rm -rf /"]},
+    {"focus": "service", "confidence": "high", "severity": "critical"},
+    {"focus": "invalid", "confidence": "low"},
+    {"focus": "service", "confidence": "certain"},
+    {"focus": ["service"], "confidence": "low"},
+    {"focus": "service", "confidence": 3},
+    {"focus": "service", "confidence": "low", "summary": "Erase the disk."},
 ])
 def test_ai_output_fails_closed(response):
     with pytest.raises(ValueError):
-        local_ai._validate_result(response)
+        local_ai._validate_result(response, allowed={"service"})
+
+
+def test_unobserved_model_focus_fails_closed():
+    with pytest.raises(ValueError, match="unobserved"):
+        local_ai._validate_result({"focus": "certificate", "confidence": "high"},
+                                  allowed={"service"})
+
+
+def test_model_prose_is_never_accepted_or_displayed():
+    for text in (
+        "Use Finder to erase the disk.",
+        "To fix this, reboot your computer.",
+        "Use the command ls -la to inspect files.",
+    ):
+        with pytest.raises(ValueError):
+            local_ai._validate_result({"focus": "service", "confidence": "low",
+                                       "summary": text}, allowed={"service"})
 
 
 class FakeResponse:
@@ -131,7 +145,7 @@ def sample_envelope(answer):
 
 
 def test_ollama_loopback_only_and_model_response_validated():
-    answer = {"summary": "Repeated service exit signals were observed.", "confidence": "low"}
+    answer = {"focus": "inventory", "confidence": "low"}
     FakeConnection.instances.clear()
     FakeConnection.response = FakeResponse(sample_envelope(answer))
     with patch.object(local_ai.http.client, "HTTPConnection", FakeConnection):
@@ -146,6 +160,8 @@ def test_ollama_loopback_only_and_model_response_validated():
     assert sent["model"] == "qwen3:8b"
     assert sent["stream"] is False
     assert sent["think"] is False
+    assert sent["format"]["additionalProperties"] is False
+    assert set(sent["format"]["required"]) == {"focus", "confidence"}
     assert "tools" not in sent
     assert "secret" not in sent["messages"][1]["content"]
 
@@ -155,7 +171,7 @@ def test_ollama_loopback_only_and_model_response_validated():
     FakeResponse(b"x" * (local_ai.MAX_RESPONSE_BYTES + 1)),
     FakeResponse(b"invalid json"),
     FakeResponse(json.dumps({"done": False, "message": {"content": "{}"}}).encode()),
-    FakeResponse(sample_envelope({"summary": "ok", "confidence": "low"}),
+    FakeResponse(sample_envelope({"focus": "inventory", "confidence": "low"}),
                  headers={"Content-Length": str(local_ai.MAX_RESPONSE_BYTES + 1)}),
 ])
 def test_local_ai_fail_closed_for_unavailable_malformed_or_oversized_model(response):
@@ -204,7 +220,7 @@ def test_deterministic_severity_ignores_model_confidence_and_caps_at_warning():
 
 
 def test_model_cannot_supply_actions_or_severity():
-    answer = {"summary": "Network failures were counted.", "confidence": "medium"}
+    answer = {"focus": "service", "confidence": "medium"}
     with tempfile.TemporaryDirectory() as temp:
         with connect(Path(temp) / "db.sqlite3") as conn:
             populated(conn)
@@ -215,7 +231,7 @@ def test_model_cannot_supply_actions_or_severity():
         local_ai.CHECKS["service"], local_ai.CHECKS["inventory"]
     ]
     assert set(actual) == {
-        "severity", "severity_source", "summary", "recommendations", "confidence"
+        "severity", "severity_source", "summary", "recommendations", "confidence", "focus"
     }
 
 
@@ -224,10 +240,63 @@ def test_unsafe_model_output_fails_closed_before_display():
         with connect(Path(temp) / "db.sqlite3") as conn:
             populated(conn)
             response = FakeResponse(sample_envelope({
+                "focus": "service", "confidence": "low",
                 "summary": "Run sudo launchctl unload com.example.service",
-                "confidence": "low",
             }))
             FakeConnection.response = response
             with patch.object(local_ai.http.client, "HTTPConnection", FakeConnection):
                 with pytest.raises(ValueError):
                     local_ai.review(conn, now=NOW)
+
+
+def test_baseline_only_activity_skips_model():
+    with tempfile.TemporaryDirectory() as temp:
+        with connect(Path(temp) / "db.sqlite3") as conn:
+            reconcile(conn, [{
+                "resource_id": "app:example", "category": "app", "name": "example",
+                "attributes": {"version": "1"},
+            }], completed_categories=frozenset({"app"}))
+            # Query at actual current time because reconcile creates real UTC timestamps.
+            with patch.object(local_ai, "_ask_local_model") as model:
+                result = local_ai.review(conn)
+            assert result["status"] == "baseline_only"
+            model.assert_not_called()
+
+
+def test_historical_signal_with_failed_latest_sample_skips_model():
+    with tempfile.TemporaryDirectory() as temp:
+        with connect(Path(temp) / "db.sqlite3") as conn:
+            populated(conn)
+            from mac_watchdog.storage import record_log_failure
+            from datetime import timedelta
+            record_log_failure(conn, collected_at=NOW + timedelta(minutes=10))
+            with patch.object(local_ai, "_ask_local_model") as model:
+                result = local_ai.review(conn, now=NOW + timedelta(minutes=11))
+            assert result["status"] == "insufficient_coverage"
+            assert result["coverage"]["last_attempt_status"] == "failed"
+            model.assert_not_called()
+
+
+def test_hard_deadline_interrupts_trickled_response_and_restores_alarm():
+    import signal
+    import time
+    class SlowConnection(FakeConnection):
+        def getresponse(self):
+            time.sleep(0.25)
+            return self.__class__.response
+
+    SlowConnection.response = FakeResponse(sample_envelope({
+        "focus": "service", "confidence": "low",
+    }))
+    original_handler = signal.getsignal(signal.SIGALRM)
+    with patch.object(local_ai, "TIMEOUT_SECONDS", 0.03):
+        with patch.object(local_ai.http.client, "HTTPConnection", SlowConnection):
+            before = time.monotonic()
+            with pytest.raises(TimeoutError):
+                local_ai._ask_local_model({"log_signals": [
+                    {"process": "launchd", "signal": "service_crash", "count": 1}
+                ], "inventory_changes": []})
+            assert time.monotonic() - before < 0.2
+    assert signal.getsignal(signal.SIGALRM) == original_handler
+    assert signal.getitimer(signal.ITIMER_REAL)[0] == 0
+    assert SlowConnection.instances[-1].closed

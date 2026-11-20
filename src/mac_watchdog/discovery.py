@@ -26,8 +26,17 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
+def _homebrew_executable() -> str | None:
+    """Find the installed Homebrew executable without relying on launchd PATH."""
+    for location in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew"):
+        candidate = Path(location)
+        if candidate.is_file() and candidate.stat().st_mode & 0o111:
+            return str(candidate)
+    return shutil.which("brew")
+
+
 def discover_brew() -> Inventory:
-    brew = shutil.which("brew")
+    brew = _homebrew_executable()
     if brew is None:
         # An absent binary is not a trustworthy completed package inventory.
         return Inventory([], frozenset())

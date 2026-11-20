@@ -178,7 +178,7 @@ def test_local_ai_fail_closed_for_unavailable_malformed_or_oversized_model(respo
     FakeConnection.response = response
     with patch.object(local_ai.http.client, "HTTPConnection", FakeConnection):
         with pytest.raises((ValueError, RuntimeError)):
-            local_ai._ask_local_model({"window_hours": 24})
+            local_ai._ask_local_model({"window_hours": 24, "log_signals": [], "inventory_changes": [{"category": "app", "operation": "changed", "count": 1}]})
     assert FakeConnection.instances[-1].closed
 
 

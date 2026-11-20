@@ -53,12 +53,11 @@ def test_retries_do_not_double_count_and_history_is_pruned():
 def test_failed_collection_is_not_a_successful_empty_window():
     with tempfile.TemporaryDirectory() as root:
         conn = connect(Path(root) / "events.sqlite3")
-        before = conn.total_changes
         with patch.object(logscan, "collect", side_effect=TimeoutError("query timed out")):
             with pytest.raises(TimeoutError):
                 logscan.collect_and_store(conn)
-        assert conn.total_changes == before
         assert recent_log_signals(conn) == []
+        assert conn.execute("SELECT status,event_count FROM log_collections").fetchone()[:] == ("failed", 0)
 
 
 @pytest.mark.parametrize("raw", [b"not-json\n", b"{}\n" * (logscan.MAX_RECORDS + 1)])
@@ -112,3 +111,36 @@ def test_predicate_requires_fault_terms_within_each_allowlisted_process():
     # Static allowlist only; no user-supplied predicate text or interpolation.
     assert "token" not in predicate.lower()
     assert "user" not in predicate.lower()
+
+
+def test_successful_zero_signal_query_records_coverage():
+    with tempfile.TemporaryDirectory() as root:
+        with connect(Path(root) / "events.sqlite3") as conn:
+            with patch.object(logscan, "collect", return_value={}):
+                result = logscan.collect_and_store(conn)
+            assert result["status"] == "success"
+            assert result["event_count"] == 0
+            row = conn.execute(
+                "SELECT status,event_count FROM log_collections"
+            ).fetchone()
+            assert tuple(row) == ("success", 0)
+            assert recent_log_signals(conn) == []
+
+
+def test_recent_log_collection_health_and_staleness():
+    from mac_watchdog.storage import collection_health, record_log_failure
+    with tempfile.TemporaryDirectory() as root:
+        with connect(Path(root) / "events.sqlite3") as conn:
+            now = datetime(2026, 11, 19, 21, tzinfo=timezone.utc)
+            assert collection_health(conn, now=now)["status"] == "unknown_or_stale"
+            store_log_signals(conn, {}, collected_at=now)
+            report = collection_health(conn, now=now + timedelta(minutes=4))
+            assert report["status"] == "recent_sample_unverified"
+            assert report["successful_windows_24h"] == 1
+            assert report["expected_windows_24h"] == 288
+            assert collection_health(conn, now=now + timedelta(minutes=20))["status"] == "unknown_or_stale"
+            record_log_failure(conn, collected_at=now + timedelta(minutes=21))
+            failed = collection_health(conn, now=now + timedelta(minutes=22))
+            assert failed["status"] == "unknown_or_stale"
+            assert failed["last_attempt_status"] == "failed"
+            assert failed["failed_windows_24h"] == 1

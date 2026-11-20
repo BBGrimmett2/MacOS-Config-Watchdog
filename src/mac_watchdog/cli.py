@@ -13,7 +13,7 @@ from .storage import connect, export, reconcile
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mac-watchdog")
-    parser.add_argument("command", choices=["scan", "export", "health", "monitor", "compare", "logs", "log-report"])
+    parser.add_argument("command", choices=["scan", "export", "health", "monitor", "compare", "logs", "log-report", "ai-review"])
     parser.add_argument("--manifest", type=Path, help="local JSON expected-state manifest (compare only)")
     args = parser.parse_args()
     if args.command == "compare" and args.manifest is None:
@@ -26,12 +26,16 @@ def main() -> int:
             run()
             return 0
         conn = connect()
-        if args.command == "logs":
+        if args.command == "ai-review":
+            from .local_ai import review
+            print(json.dumps(review(conn), indent=2))
+        elif args.command == "logs":
             from .logscan import collect_and_store
             print(json.dumps(collect_and_store(conn), indent=2))
         elif args.command == "log-report":
-            from .storage import recent_log_signals
+            from .storage import recent_log_signals, collection_health
             print(json.dumps({"schema_version": 1, "mode": "read_only",
+                              "coverage": collection_health(conn),
                               "signals": recent_log_signals(conn)}, indent=2))
         elif args.command == "compare":
             manifest = load_manifest(args.manifest)

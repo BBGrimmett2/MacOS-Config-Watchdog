@@ -56,6 +56,12 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
         count INTEGER NOT NULL CHECK(count >= 1),
         PRIMARY KEY(window_start, process, signal)
       );
+      CREATE TABLE IF NOT EXISTS log_collections (
+        window_start TEXT PRIMARY KEY,
+        finished_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('success','failed')),
+        event_count INTEGER NOT NULL CHECK(event_count >= 0)
+      );
       CREATE TABLE IF NOT EXISTS scans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         started_at TEXT NOT NULL,
@@ -158,6 +164,15 @@ def store_log_signals(conn: sqlite3.Connection, counts: dict[tuple[str, str], in
                 DO UPDATE SET count=MAX(count,excluded.count)
             """, (bucket.isoformat(), process, signal, count))
         conn.execute("DELETE FROM log_signals WHERE window_start < ?", (cutoff,))
+        conn.execute("""
+            INSERT INTO log_collections(window_start,finished_at,status,event_count)
+            VALUES(?,?,?,?)
+            ON CONFLICT(window_start) DO UPDATE SET
+              finished_at=excluded.finished_at,
+              status=excluded.status,
+              event_count=excluded.event_count
+        """, (bucket.isoformat(), at.isoformat(), "success", sum(counts.values())))
+        conn.execute("DELETE FROM log_collections WHERE window_start < ?", (cutoff,))
     return {
         "window_start": bucket.isoformat(), "signal_types": len(counts),
         "event_count": sum(counts.values()), "status": "success",
@@ -171,3 +186,51 @@ def recent_log_signals(conn: sqlite3.Connection, limit: int = 100) -> list[dict[
         "SELECT window_start,process,signal,count FROM log_signals "
         "ORDER BY window_start DESC,process,signal LIMIT ?", (limit,)
     )]
+
+
+def record_log_failure(conn: sqlite3.Connection, *, collected_at: datetime | None = None) -> None:
+    """Persist only a failure status, never the exception or log data."""
+    at = (collected_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    bucket = at.replace(minute=(at.minute // 5) * 5, second=0, microsecond=0)
+    cutoff = (at - timedelta(days=7)).isoformat()
+    with conn:
+        conn.execute("""
+            INSERT INTO log_collections(window_start,finished_at,status,event_count)
+            VALUES(?,?,?,0)
+            ON CONFLICT(window_start) DO UPDATE SET
+              finished_at=excluded.finished_at,status=excluded.status,event_count=0
+        """, (bucket.isoformat(), at.isoformat(), "failed"))
+        conn.execute("DELETE FROM log_collections WHERE window_start < ?", (cutoff,))
+
+
+def collection_health(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict[str, Any]:
+    """Coverage is never certified complete; missing samples are unknown."""
+    at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = (at - timedelta(hours=24)).isoformat()
+    row = conn.execute("""
+        SELECT finished_at,status FROM log_collections
+        ORDER BY finished_at DESC LIMIT 1
+    """).fetchone()
+    counts = {r["status"]: r["total"] for r in conn.execute("""
+        SELECT status,COUNT(*) AS total FROM log_collections
+        WHERE finished_at >= ? AND finished_at <= ? GROUP BY status
+    """, (cutoff, at.isoformat()))}
+    recent = False
+    if row:
+        finished = datetime.fromisoformat(row["finished_at"])
+        recent = bool(row["status"] == "success"
+                      and timedelta(0) <= at - finished <= timedelta(minutes=15))
+    scan = conn.execute("""
+        SELECT kind,status,finished_at FROM scans WHERE finished_at IS NOT NULL
+        ORDER BY id DESC LIMIT 1
+    """).fetchone()
+    return {
+        "status": "recent_sample_unverified" if recent else "unknown_or_stale",
+        "last_attempt_at": row["finished_at"] if row else None,
+        "last_attempt_status": row["status"] if row else None,
+        "successful_windows_24h": counts.get("success", 0),
+        "failed_windows_24h": counts.get("failed", 0),
+        "expected_windows_24h": 288,
+        "inventory_scan": dict(scan) if scan else None,
+        "note": "Log queries are partial samples, not proof of continuous coverage.",
+    }

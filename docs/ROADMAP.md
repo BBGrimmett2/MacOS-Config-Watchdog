@@ -12,7 +12,8 @@
 - [ ] Retention pruning, log rotation, robust independent health observer
 
 ## Phase 2 — Local review
-- Ollama + Qwen3 8B on-demand; predefined read-only diagnostic tools only
+- [x] Opt-in Ollama + Qwen3 8B on-demand aggregate-only advisory (no diagnostic tools)
+- [ ] Expanded predefined read-only diagnostic tools after separate security review
 - AI-backed review, local draft generation, priority notifications
 - Schema-validated outputs; avoid interpreting untrusted content as instructions
 

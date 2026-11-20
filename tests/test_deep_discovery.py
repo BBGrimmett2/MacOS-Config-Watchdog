@@ -25,17 +25,20 @@ def test_deep_inventory_has_additional_collectors():
     with (
         patch.object(discovery, "discover_apps", return_value=discovery.Inventory([], frozenset({"app"}))),
         patch.object(discovery, "discover_brew", return_value=empty),
+        patch.object(discovery, "discover_ollama_models", return_value=discovery.Inventory([], frozenset({"ollama_model"}))) as models,
         patch.object(discovery, "discover_receipts", return_value=discovery.Inventory([], frozenset({"pkg_receipt"}))) as receipts,
         patch.object(discovery, "discover_launchd", return_value=discovery.Inventory([], frozenset({"launchd"}))) as launchd,
         patch.object(discovery, "discover_os_build", return_value=discovery.Inventory([], frozenset({"macos_build"}))) as osbuild,
     ):
         routine = discovery.discover(mode="routine")
-        assert routine.completed_categories == frozenset({"app"})
+        assert routine.completed_categories == frozenset({"app", "ollama_model"})
+        models.assert_called_once()
         receipts.assert_not_called()
         launchd.assert_not_called()
         osbuild.assert_not_called()
         deep = discovery.discover(mode="deep")
-        assert deep.completed_categories == frozenset({"app", "pkg_receipt", "launchd", "macos_build"})
+        assert deep.completed_categories == frozenset({"app", "ollama_model", "pkg_receipt", "launchd", "macos_build"})
+        assert models.call_count == 2
 
 
 def test_launchd_collects_labels_not_arguments():

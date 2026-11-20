@@ -14,3 +14,5 @@ ADRs capture decisions that must survive individual chat sessions and agent hand
 - [0002 — Local scanning, baseline, persistence and reporting](0002-observation-and-state.md)
 - [0003 — Local AI and GitHub security boundaries](0003-ai-and-github-security.md)
 - [0004 — Guarded deployment, rollback and incident tracking](0004-guarded-deployment.md)
+
+- [0011 — Opt-in local-only AI review](0011-opt-in-local-ai-review.md)

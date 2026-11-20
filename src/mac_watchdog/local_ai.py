@@ -93,9 +93,10 @@ def _validate_result(result: Any) -> dict[str, Any]:
         "severity", "summary", "recommendations", "confidence"
     }:
         raise ValueError("AI response has unsupported schema")
-    if result["severity"] not in SEVERITIES or result["confidence"] not in {
-        "low", "medium", "high"
-    }:
+    if (not isinstance(result["severity"], str)
+            or not isinstance(result["confidence"], str)
+            or result["severity"] not in SEVERITIES
+            or result["confidence"] not in {"low", "medium", "high"}):
         raise ValueError("AI response has invalid classification")
     summary = _validate_text(result["summary"], max_len=360)
     suggestions = result["recommendations"]

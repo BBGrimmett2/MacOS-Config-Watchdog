@@ -34,7 +34,41 @@ SIGNALS = {
         ("network_failure", re.compile(r"\b(?:network|interface|route)\b.{0,100}\b(?:fail(?:ed|ure)?|timeout|unreachable)\b", re.I)),
     ),
 }
-PREDICATE = " OR ".join(f'process == "{process}"' for process in sorted(PROCESSES))
+# Filter at the macOS log query itself, before any sensitive message reaches
+# Python. These static prefilters intentionally over-include candidate messages;
+# the more specific SIGNALS regexes remain authoritative for classification.
+# Process AND fault predicates prevent unrelated high-volume log records
+# (including routine launchd and DNS activity) consuming the byte budget.
+FAULT_TERMS = {
+    "launchd": ("crash", "abnormal", "segmentation fault", "throttl", "respawn", "restart"),
+    "trustd": ("fail", "invalid", "expired", "rejected"),
+    "mDNSResponder": ("fail", "timeout", "timed out"),
+    "configd": ("fail", "timeout", "unreachable"),
+}
+CONTEXT_TERMS = {
+    "trustd": ("certificate", "trust evaluation", "revocation"),
+    "mDNSResponder": ("dns", "resolver", "query"),
+    "configd": ("network", "interface", "route"),
+}
+
+
+def _message_predicate(terms: tuple[str, ...]) -> str:
+    return "(" + " OR ".join(
+        f'eventMessage CONTAINS[c] "{term}"' for term in terms
+    ) + ")"
+
+
+def _log_predicate() -> str:
+    clauses = []
+    for process in sorted(PROCESSES):
+        conditions = [f'process == "{process}"', _message_predicate(FAULT_TERMS[process])]
+        if process in CONTEXT_TERMS:
+            conditions.append(_message_predicate(CONTEXT_TERMS[process]))
+        clauses.append("(" + " AND ".join(conditions) + ")")
+    return " OR ".join(clauses)
+
+
+PREDICATE = _log_predicate()
 
 
 def _read_bounded(argv: list[str]) -> bytes:

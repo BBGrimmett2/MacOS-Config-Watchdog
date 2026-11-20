@@ -95,3 +95,20 @@ def test_non_macos_collection_disallowed():
     with patch.object(logscan.platform, "system", return_value="Linux"):
         with pytest.raises(RuntimeError, match="macOS"):
             logscan.collect()
+
+
+def test_predicate_requires_fault_terms_within_each_allowlisted_process():
+    predicate = logscan.PREDICATE
+    assert predicate.count('process == "') == len(logscan.PROCESSES)
+    assert predicate.count('eventMessage CONTAINS[c] "') >= 20
+    for process in logscan.PROCESSES:
+        assert f'process == "{process}"' in predicate
+        assert all(f'eventMessage CONTAINS[c] "{term}"' in predicate
+                   for term in logscan.FAULT_TERMS[process])
+    for process, terms in logscan.CONTEXT_TERMS.items():
+        assert all(f'eventMessage CONTAINS[c] "{term}"' in predicate for term in terms)
+    assert " AND " in predicate
+    assert " OR " in predicate
+    # Static allowlist only; no user-supplied predicate text or interpolation.
+    assert "token" not in predicate.lower()
+    assert "user" not in predicate.lower()

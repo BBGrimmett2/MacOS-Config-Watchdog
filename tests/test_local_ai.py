@@ -33,7 +33,7 @@ def test_no_findings_skips_model_entirely():
             with patch.object(local_ai, "_ask_local_model") as call:
                 result = local_ai.review(conn, now=NOW)
             assert result["status"] == "no_findings"
-            assert "not proof" in result["note"]
+            assert "does not establish system health" in result["note"]
             call.assert_not_called()
 
 

@@ -18,7 +18,6 @@ PORT = 11434
 TIMEOUT_SECONDS = 30
 MAX_RESPONSE_BYTES = 16 * 1024
 MAX_PROMPT_BYTES = 4096
-MAX_ITEMS = 5
 SIGNAL_TYPES = frozenset({
     ("launchd", "service_crash"), ("launchd", "service_restart"),
     ("trustd", "certificate_failure"), ("mDNSResponder", "dns_failure"),
@@ -28,23 +27,33 @@ CHANGE_CATEGORIES = frozenset({
     "app", "brew_formula", "brew_cask", "pkg_receipt", "launchd", "macos_build",
 })
 CHANGE_OPERATIONS = frozenset({"added", "changed", "removed"})
-SEVERITIES = frozenset({"info", "warning", "critical"})
-# Text is displayed locally only; these checks reject suspicious hallucinated
-# URLs, absolute filesystem paths, control characters, and output bloat.
+# Model output can contain an explanatory sentence ONLY. Recommended checks
+# are selected from local constants, never returned by the model.
 FORBIDDEN_TEXT = re.compile(
-    r"(?:https?://|file://|/(?:Users|private|etc|var|opt|tmp)/|[A-Za-z]:\\|[\x00-\x1f\x7f])",
+    r"(?:https?://|file://|/(?:Users|private|etc|var|opt|tmp)/|"
+    r"[A-Za-z]:\\\\|[\\x00-\\x1f\\x7f]|"
+    r"[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}|"
+    r"\\b(?:sudo|chmod|chown|launchctl|rm|curl|wget|bash|zsh|"
+    r"osascript|python3?|pip3?|brew|ansible-playbook|"
+    r"execute|run|install|uninstall|disable|enable|delete|remove)\\b|"
+    r"[;&|><`$])",
     re.I,
 )
+# These are conservative informational next checks, not runnable commands.
+CHECKS = {
+    "service": "Inspect service stability using trusted local diagnostics.",
+    "certificate": "Review certificate validation failures through trusted local diagnostics.",
+    "network": "Review network and name-resolution stability using trusted local diagnostics.",
+    "inventory": "Review recent inventory changes against the Ansible expected-state manifest.",
+}
 SYSTEM_PROMPT = (
-    "You analyze aggregate macOS monitoring counts. The input contains only "
-    "fixed vocabulary categories and nonnegative counts. Provide cautious, "
-    "brief advice based only on those counts. Never claim a confirmed cause, "
-    "absence of failures, or permission to change anything. Do not produce "
-    "shell commands, paths, URLs, identifiers, personal information or secrets. "
-    "Return only a JSON object with exactly these fields: "
-    "severity (info|warning|critical), summary (string), "
-    "recommendations (array of strings), confidence (low|medium|high). "
-    "No markdown. No tools. No execution."
+    "Analyze anonymous macOS monitoring counts. They contain only fixed "
+    "categories and counts, not diagnostic evidence. Briefly explain the "
+    "observed aggregate pattern without asserting a cause or system health. "
+    "Return JSON with exactly two fields: summary (one declarative sentence "
+    "without instructions, commands, paths, URLs, names or identifiers), "
+    "confidence (low|medium|high). Do not recommend any actions; the "
+    "application selects safe informational checks deterministically."
 )
 
 
@@ -89,25 +98,38 @@ def _validate_text(value: Any, *, max_len: int) -> str:
 
 
 def _validate_result(result: Any) -> dict[str, Any]:
-    if not isinstance(result, dict) or set(result) != {
-        "severity", "summary", "recommendations", "confidence"
-    }:
+    if not isinstance(result, dict) or set(result) != {"summary", "confidence"}:
         raise ValueError("AI response has unsupported schema")
-    if (not isinstance(result["severity"], str)
-            or not isinstance(result["confidence"], str)
-            or result["severity"] not in SEVERITIES
+    if (not isinstance(result["confidence"], str)
             or result["confidence"] not in {"low", "medium", "high"}):
-        raise ValueError("AI response has invalid classification")
-    summary = _validate_text(result["summary"], max_len=360)
-    suggestions = result["recommendations"]
-    if not isinstance(suggestions, list) or len(suggestions) > MAX_ITEMS:
-        raise ValueError("AI recommendations are not a bounded list")
-    validated = [_validate_text(x, max_len=200) for x in suggestions]
+        raise ValueError("AI response has invalid confidence")
     return {
-        "severity": result["severity"],
-        "summary": summary,
-        "recommendations": validated,
+        "summary": _validate_text(result["summary"], max_len=360),
         "confidence": result["confidence"],
+    }
+
+
+def _assess(aggregate: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic advisory level and static, non-executable next checks.
+
+    With aggregate-only evidence, never classify an incident as critical.
+    Initial discovery's bulk 'added' events are informational, not faults.
+    """
+    kinds = {(row["process"], row["signal"]) for row in aggregate["log_signals"]
+             if row["count"] > 0}
+    checks = []
+    if any(process == "launchd" for process, _ in kinds):
+        checks.append(CHECKS["service"])
+    if ("trustd", "certificate_failure") in kinds:
+        checks.append(CHECKS["certificate"])
+    if any(process in {"mDNSResponder", "configd"} for process, _ in kinds):
+        checks.append(CHECKS["network"])
+    if aggregate["inventory_changes"]:
+        checks.append(CHECKS["inventory"])
+    return {
+        "severity": "warning" if kinds else "info",
+        "recommendations": checks,
+        "severity_source": "deterministic_rules",
     }
 
 
@@ -167,10 +189,11 @@ def review(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict[str
             "status": "no_findings",
             "note": "No recorded signals or inventory changes in 24 hours; not proof of system health.",
         }
+    assessment = _assess(aggregate)
     verdict = _ask_local_model(aggregate)
     return {
         "schema_version": 1, "mode": "read_only", "status": "advisory",
         "model": MODEL, "window_hours": 24,
-        "analysis": verdict,
+        "analysis": {**assessment, **verdict},
         "note": "Model advice is unverified. No actions were performed.",
     }

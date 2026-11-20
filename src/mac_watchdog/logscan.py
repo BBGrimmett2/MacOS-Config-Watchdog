@@ -157,5 +157,10 @@ def collect() -> dict[tuple[str, str], int]:
 def collect_and_store(conn: Any) -> dict[str, Any]:
     """Persist aggregated, privacy-safe counts only after a complete log query."""
     from .storage import store_log_signals
-    counts = collect()
-    return store_log_signals(conn, counts, collected_at=datetime.now(timezone.utc))
+    from .storage import record_log_failure
+    try:
+        counts = collect()
+        return store_log_signals(conn, counts, collected_at=datetime.now(timezone.utc))
+    except Exception:
+        record_log_failure(conn)
+        raise

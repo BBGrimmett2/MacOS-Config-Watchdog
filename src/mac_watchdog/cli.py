@@ -4,21 +4,32 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+from .expected import compare, load_manifest
 
 from .discovery import discover
 from .storage import connect, export, reconcile
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mac-watchdog")
-    parser.add_argument("command", choices=["scan", "export", "health", "monitor"])
+    parser.add_argument("command", choices=["scan", "export", "health", "monitor", "compare"])
+    parser.add_argument("--manifest", type=Path, help="local JSON expected-state manifest (compare only)")
     args = parser.parse_args()
+    if args.command == "compare" and args.manifest is None:
+        parser.error("compare requires --manifest")
+    if args.command != "compare" and args.manifest is not None:
+        parser.error("--manifest is supported only for compare")
     try:
         if args.command == "monitor":
             from .monitor import run
             run()
             return 0
         conn = connect()
-        if args.command == "scan":
+        if args.command == "compare":
+            manifest = load_manifest(args.manifest)
+            print(json.dumps(compare(conn, manifest), indent=2))
+        elif args.command == "scan":
             inventory = discover(mode="deep")
             scan_id = reconcile(conn, inventory.observations, kind="deep", completed_categories=inventory.completed_categories)
             print(json.dumps({"scan_id": scan_id, "resources": len(inventory.observations), "status": "success"}))
@@ -31,7 +42,7 @@ def main() -> int:
             return 0 if result == "ok" else 1
         conn.close()
         return 0
-    except (OSError, RuntimeError, ValueError, TimeoutError, __import__("subprocess").CalledProcessError) as exc:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, TimeoutError, __import__("subprocess").CalledProcessError) as exc:
         print(f"watchdog: {exc}", file=sys.stderr)
         return 1
 

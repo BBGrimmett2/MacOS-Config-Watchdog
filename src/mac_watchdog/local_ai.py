@@ -95,13 +95,23 @@ def _aggregate(conn: sqlite3.Connection, now: datetime) -> dict[str, Any]:
         if key not in SIGNAL_TYPES or type(row["total"]) is not int or row["total"] < 0:
             raise ValueError("Unexpected log signal metadata")
         signals.append({"process": key[0], "signal": key[1], "count": min(row["total"], 1000000)})
+    first = conn.execute(
+        "SELECT started_at FROM scans WHERE status = 'success' ORDER BY id LIMIT 1"
+    ).fetchone()
+    baseline_at = first["started_at"] if first else ""
+    baseline = conn.execute(
+        "SELECT COUNT(*) FROM changes WHERE transaction_id=? AND operation='added' "
+        "AND occurred_at >= ? AND occurred_at <= ?",
+        (baseline_at, cutoff, now.astimezone(timezone.utc).isoformat()),
+    ).fetchone()[0]
     changes = []
     for row in conn.execute(
         "SELECT r.category AS category,c.operation AS operation,COUNT(*) AS total "
         "FROM changes c JOIN resources r ON r.resource_id=c.resource_id "
-        "WHERE c.occurred_at >= ? GROUP BY r.category,c.operation "
-        "ORDER BY r.category,c.operation",
-        (cutoff,),
+        "WHERE c.occurred_at >= ? AND c.occurred_at <= ? "
+        "AND NOT (c.transaction_id=? AND c.operation='added') "
+        "GROUP BY r.category,c.operation ORDER BY r.category,c.operation",
+        (cutoff, now.astimezone(timezone.utc).isoformat(), baseline_at),
     ):
         if row["category"] not in CHANGE_CATEGORIES or row["operation"] not in CHANGE_OPERATIONS:
             raise ValueError("Unexpected inventory change metadata")
@@ -109,7 +119,10 @@ def _aggregate(conn: sqlite3.Connection, now: datetime) -> dict[str, Any]:
             "category": row["category"], "operation": row["operation"],
             "count": min(row["total"], 1000000),
         })
-    return {"window_hours": 24, "log_signals": signals, "inventory_changes": changes}
+    return {
+        "window_hours": 24, "log_signals": signals,
+        "inventory_changes": changes, "baseline_additions": min(baseline, 1000000),
+    }
 
 
 def _allowed_focus(aggregate: dict[str, Any]) -> set[str]:
@@ -151,7 +164,8 @@ def _assess(aggregate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ask_local_model(payload: dict[str, Any]) -> dict[str, str]:
-    user_message = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    model_payload = {key: value for key, value in payload.items() if key != "baseline_additions"}
+    user_message = json.dumps(model_payload, sort_keys=True, separators=(",", ":"))
     if len(user_message.encode("utf-8")) > MAX_PROMPT_BYTES:
         raise ValueError("Aggregated AI input exceeded size budget")
     allowed = _allowed_focus(payload)
@@ -207,6 +221,13 @@ def review(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict[str
     now = now or datetime.now(timezone.utc)
     aggregate = _aggregate(conn, now)
     coverage = collection_health(conn, now=now)
+    if not aggregate["log_signals"] and not aggregate["inventory_changes"] and aggregate["baseline_additions"]:
+        return {
+            "schema_version": 1, "mode": "read_only",
+            "status": "baseline_only", "coverage": coverage,
+            "analysis": _assess(aggregate),
+            "note": "Initial baseline additions only; no model inference performed.",
+        }
     if not aggregate["log_signals"] and not aggregate["inventory_changes"]:
         return {
             "schema_version": 1, "mode": "read_only", "status": "no_findings",
@@ -214,17 +235,7 @@ def review(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict[str
             "note": "No recorded findings; this does not establish system health.",
         }
     assessment = _assess(aggregate)
-    meaningful_inventory = any(
-        row["operation"] in {"changed", "removed"}
-        for row in aggregate["inventory_changes"]
-    )
-    if not aggregate["log_signals"] and not meaningful_inventory:
-        return {
-            "schema_version": 1, "mode": "read_only",
-            "status": "baseline_only", "coverage": coverage,
-            "analysis": assessment,
-            "note": "Only additions were recorded; no model inference performed.",
-        }
+    # Post-baseline additions are legitimate new configuration changes.
     if aggregate["log_signals"] and coverage["status"] != "recent_sample_unverified":
         return {
             "schema_version": 1, "mode": "read_only",

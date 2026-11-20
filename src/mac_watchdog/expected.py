@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 CATEGORIES = frozenset({
-    "app", "brew_formula", "brew_cask", "pkg_receipt", "launchd", "macos_build"
+    "app", "brew_formula", "brew_cask", "pkg_receipt", "launchd", "macos_build", "ollama_model"
 })
 MAX_MANIFEST_BYTES = 1024 * 1024
 

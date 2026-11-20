@@ -151,12 +151,12 @@ def _assess(aggregate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ask_local_model(payload: dict[str, Any]) -> dict[str, str]:
-    allowed = _allowed_focus(payload)
-    if not allowed:
-        raise ValueError("No observed focus for local inference")
     user_message = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if len(user_message.encode("utf-8")) > MAX_PROMPT_BYTES:
         raise ValueError("Aggregated AI input exceeded size budget")
+    allowed = _allowed_focus(payload)
+    if not allowed:
+        raise ValueError("No observed focus for local inference")
     request = json.dumps({
         "model": MODEL, "stream": False, "think": False, "format": OUTPUT_FORMAT,
         "options": {"temperature": 0, "num_predict": 128},

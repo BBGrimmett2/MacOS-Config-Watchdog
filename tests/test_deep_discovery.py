@@ -108,3 +108,45 @@ def test_launchd_missing_label_uses_stable_scoped_filename():
         assert record["attributes"]["identity_source"] == "filename"
         assert "token" not in str(record)
         assert result.completed_categories == frozenset({"launchd"})
+
+
+def test_brew_inventory_with_launchd_restricted_path():
+    # launchd PATH omits /opt/homebrew/bin, but the collector must still find brew.
+    from unittest.mock import Mock
+    with (
+        patch.object(discovery.Path, "is_file", autospec=True) as is_file,
+        patch.object(discovery.Path, "stat", autospec=True) as stat,
+        patch.object(discovery.shutil, "which", return_value=None) as which,
+        patch.object(discovery, "_run", side_effect=["bat\njq\n", "google-chrome\n"]) as run,
+    ):
+        is_file.side_effect = lambda p: str(p) == "/opt/homebrew/bin/brew"
+        stat.return_value = Mock(st_mode=0o755)
+        inventory = discovery.discover_brew()
+    assert inventory.completed_categories == frozenset({"brew_formula", "brew_cask"})
+    assert {r["resource_id"] for r in inventory.observations} == {
+        "brew_formula:bat", "brew_formula:jq", "brew_cask:google-chrome"
+    }
+    run.assert_any_call("/opt/homebrew/bin/brew", "list", "--formula")
+    run.assert_any_call("/opt/homebrew/bin/brew", "list", "--cask")
+    which.assert_not_called()
+
+
+def test_missing_brew_never_confirms_empty_inventory():
+    with (
+        patch.object(discovery.Path, "is_file", return_value=False),
+        patch.object(discovery.shutil, "which", return_value=None),
+    ):
+        inventory = discovery.discover_brew()
+    assert inventory.observations == []
+    assert inventory.completed_categories == frozenset()
+
+
+def test_homebrew_fallback_intel_path():
+    from unittest.mock import Mock
+    with (
+        patch.object(discovery.Path, "is_file", autospec=True) as is_file,
+        patch.object(discovery.Path, "stat", autospec=True, return_value=Mock(st_mode=0o755)),
+        patch.object(discovery.shutil, "which", return_value=None),
+    ):
+        is_file.side_effect = lambda p: str(p) == "/usr/local/bin/brew"
+        assert discovery._homebrew_executable() == "/usr/local/bin/brew"
